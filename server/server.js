@@ -14,6 +14,10 @@ const io = new Server(server, {
 let rooms = {};
 
 io.on('connection', (socket) => {
+    console.log("User connected:", socket.id);
+
+    // --- SECTION 1: LOBBY & GAME STATE (Restored from your code) ---
+
     // 1. Create Room
     socket.on('create_room', ({ playerName }) => {
         const roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -35,6 +39,9 @@ io.on('connection', (socket) => {
             rooms[roomId].players.push({ id: socket.id, name: playerName, score: 0 });
             socket.join(roomId);
             io.to(roomId).emit('player_joined', { players: rooms[roomId].players });
+            
+            // Send existing Peer IDs if game is already running (Reconnection handling)
+            socket.to(roomId).emit('user_joined', { id: socket.id }); 
         } else {
             socket.emit('error', 'Room full or not found');
         }
@@ -44,7 +51,6 @@ io.on('connection', (socket) => {
     socket.on('start_game', ({ roomId }) => {
         if (rooms[roomId] && socket.id === rooms[roomId].hostId) {
             rooms[roomId].gameStarted = true;
-            // Notify everyone game started, Player 1 goes first
             io.to(roomId).emit('game_started', { 
                 currentTurnId: rooms[roomId].players[0].id,
                 round: 1 
@@ -52,7 +58,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 4. Switch Turn
+    // 4. Switch Turn (Logic to count rounds)
     socket.on('finish_turn', ({ roomId }) => {
         if (!rooms[roomId]) return;
         const r = rooms[roomId];
@@ -69,9 +75,30 @@ io.on('connection', (socket) => {
         });
     });
 
-    // 5. Emojis & PeerID Exchange
-    socket.on('send_emoji', (data) => socket.to(data.roomId).emit('receive_emoji', data));
-    socket.on('send_peer_id', (data) => socket.to(data.roomId).emit('receive_peer_id', data));
+    // --- SECTION 2: REMOTE CONTROL (The new Touch Mirroring) ---
+
+    // 5. Touch / Mouse Mirroring
+    // This allows Player 2 to control Player 1's screen during their turn
+    socket.on('remote_input', (data) => {
+        // Broadcast the touch data to everyone else in the room (The Host)
+        socket.broadcast.to(data.roomId).emit('mimic_input', data);
+    });
+
+    // 6. WebRTC Video Signaling
+    socket.on('send_peer_id', (data) => {
+        socket.to(data.roomId).emit('receive_peer_id', data);
+    });
+
+    // 7. Emojis
+    socket.on('send_emoji', (data) => {
+        socket.to(data.roomId).emit('receive_emoji', data);
+    });
+
+    // Cleanup when user disconnects
+    socket.on('disconnect', () => {
+        // Optional: Logic to remove player from room
+        console.log("User disconnected:", socket.id);
+    });
 });
 
 const PORT = process.env.PORT || 3000;
